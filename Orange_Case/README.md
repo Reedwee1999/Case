@@ -42,7 +42,6 @@ For a detailed step-by-step walkthrough, see the schema documentation below.
 ---
 
 
-
 ### 1. Start the environment
 
 ```bash
@@ -52,7 +51,11 @@ cd /your/path/here
 
 ### 2. Check your JSON file
 
-Ensure your `social_media_info.json` file is inside the `/home/jovyan/work/social_media_info.json` (mounted from `./spark_code`), note that it will be in a zip.
+Ensure your `social_media_info.json` file is inside the `/home/jovyan/work/social_media_info.json` (mounted from `./spark_code`), note that it *will* be in a zip.
+
+```bash
+cp datasets/social_media_info.json spark_code/
+```
 
 ### 4. Run the pipeline via Airflow (recommended)
 
@@ -94,7 +97,12 @@ SELECT * FROM content_performance_mart LIMIT 5;
 
 ## Database Schema
 
-The data warehouse consists of **six tables** in the `public` schema:
+The schema is built in two distinct layers to balance **storage efficiency** and **analytical performance**:
+
+- **Raw tables (`users`, `posts`, `comments`)** are normalised to eliminate redundancy (e.g., user details are stored once) and to closely mirror the nested JSON structure. Tags are flattened directly into `posts` as strings.
+- **Data marts** are denormalised and pre‑aggregated to serve specific business questions (user engagement, content performance, tag popularity). This shifts complex `GROUP BY` and `COUNT` operations from ad‑hoc queries to scheduled dbt builds, making dashboards and reports significantly faster.
+
+The data warehouse globally consists of **six tables** in the `public` schema:
 
 ### Raw Tables (Loaded by PySpark)
 
@@ -129,69 +137,6 @@ The data warehouse consists of **six tables** in the `public` schema:
 
 ---
 
-## CLI Reference
-
-### `etl.py` (PySpark script)
-
-The script is invoked via `spark-submit` and does **not** accept CLI arguments directly — configuration is hard‑coded inside the script (database credentials, file paths). To modify behaviour, edit the script directly.
-
-```bash
-# Run via Docker
-docker exec pyspark spark-submit --jars /home/jovyan/drivers/postgresql-42.7.3.jar /home/jovyan/work/etl.py
-```
-
-### `dbt` commands
-
-All dbt commands are executed inside the `dbt` container:
-
-```bash
-# Build all models (tables)
-docker exec dbt dbt run --profiles-dir /app --project-dir /app
-
-# Build a specific model
-docker exec dbt dbt run --models tag_analysis_mart --profiles-dir /app --project-dir /app
-
-# View compiled SQL
-docker exec dbt dbt compile --profiles-dir /app --project-dir /app
-```
-
-### Airflow DAG
-
-The DAG `social_media_pipeline` has two tasks:
-- **`run_pyspark_etl`** — executes the PySpark ETL.
-- **`run_dbt_marts`** — executes `dbt run`.
-
-The DAG is scheduled to run **daily** (`@daily`) but can be manually triggered via the Airflow UI.
-
----
-
-## Troubleshooting
-
-| Symptom                                                    | Likely Cause / Fix                                                                                  |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Airflow cannot connect to Docker (`Cannot connect to the Docker daemon`) | Ensure `/var/run/docker.sock` is mounted in `docker-compose.yaml` (already configured). Airflow runs as `user: "0:0"`. |
-| `ClassNotFoundException: org.postgresql.Driver` in PySpark | The `spark-submit` command must include `--jars /home/jovyan/drivers/postgresql-42.7.3.jar` (already in DAG and manual commands). |
-| dbt cannot find `postgres` profile                          | The `profiles.yml` in `dbt_project/` must use the top‑level key `postgres_dw` (already configured). |
-| dbt cannot find raw tables (`Relation "posts" does not exist`) | dbt models use `{{ source('public', 'posts') }}` and `sources.yml` defines these sources (already present). |
-| dbt container exits immediately                             | The `dbt` service has `entrypoint: ""` and `command: ["tail", "-f", "/dev/null"]` to keep it alive. |
-| Jupyter token expired (`403 Forbidden`)                     | Run `docker exec pyspark jupyter server list` to get the current token, or set a password with `docker exec -it pyspark jupyter server password`. |
-| Port conflicts (e.g., `8080` or `8888` already in use)      | Change the host port in `docker-compose.yaml` (e.g., `"8081:8080"`).                               |
-
----
-
-## Performance Metrics
-
-| Metric               | Value            |
-| -------------------- | ---------------- |
-| **Users loaded**     | 65,000           |
-| **Posts loaded**     | 324,508          |
-| **Comments loaded**  | 813,211          |
-| **JSON file size**   | ~500 MB          |
-| **Pipeline runtime** | ~2–3 minutes for full ETL + dbt run |
-| **External drive**   | `/Volumes/IDEP` (persists all code and data) |
-
----
-
 ## Deliverables
 
 This repository contains everything required for the task:
@@ -202,17 +147,6 @@ This repository contains everything required for the task:
 4. **dbt Models** – 3 `.sql` files in `dbt_project/models/`
 5. **Documentation** – This README file.
 6. **Environment Configuration** – `docker-compose.yaml` and `Dockerfile`.
-
----
-
-## Notes
-
-- All code and data are persisted on the external drive (`/Volumes/IDEP/Case-2`) to minimise internal SSD usage.
-- The `datasets/` folder containing the raw JSON is **excluded** from the Git repository (via `.gitignore`) to keep the repo lightweight.
-- Airflow’s DAG runs daily at midnight by default (`@daily`), but can be manually triggered at any time.
-- The PostgreSQL JDBC driver (`postgresql-42.7.3.jar`) is included in the `drivers/` folder and mounted into the PySpark container.
-```
-```
 
 ---
 
@@ -264,30 +198,4 @@ SELECT * FROM tag_analysis_mart ORDER BY post_count DESC LIMIT 10;
 - **Task 2** (`run_dbt_marts`): Runs dbt models via `docker exec`.
 - **Dependency**: Task 2 runs only after Task 1 completes successfully.
 - **Schedule**: Runs daily at midnight (`@daily`), but can be manually triggered.
-
-
----
-
-## Performance Metrics
-
-| Metric          | Value          |
-| :-------------- | :------------- |
-| Users loaded    | 65,000         |
-| Posts loaded    | 324,508        |
-| Comments loaded | 813,211        |
-| JSON file size  | ~500 MB        |
-
-
----
-
-## Deliverables
-
-This repository contains everything required for the task:
-
-1. **Data Model** — Documented in the schema section above.
-2. **Airflow DAG** — `dags/social_media_pipeline.py`
-3. **PySpark Script** — `spark_code/etl.py`
-4. **dbt Models** — 3 `.sql` files in `dbt_project/models/`
-5. **Documentation** — This README file.
-6. **Environment Configuration** — `docker-compose.yaml` and `Dockerfile`.
 
