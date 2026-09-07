@@ -8,7 +8,7 @@ In the interest of academic and professional honesty, the following should be no
 - The **Python data preparation script** (`analysis.py`) and **SQLite import script** (`import_to_db.py`) were written by me, then reviewed and optimized with the assistance of the DeepSeek AI agent.
 - The **Metabase dashboard** was designed and assembled by me, based on the analytical insights derived from the data.
 - The **database schema** and **table relationships** were designed by me
-- The **readme** was created with the aid the DeepSeek AI agent and reviewed by me. 
+- The **README** was created with the aid the DeepSeek AI agent and reviewed by me. 
 
 ---
 
@@ -21,8 +21,6 @@ The project includes:
 - A **Metabase dashboard** with four tabs covering rider behavior, temporal patterns, trip characteristics, and geographic hotspots.
 - A set of **optimized SQL queries** that power the dashboard charts.
 - A **clean, organized folder structure** on an internal SSD for fast query performance.
-
-For a detailed step‑by‑step walkthrough, see the schema and architecture sections below.
 
 ---
 
@@ -47,16 +45,3 @@ For a detailed step‑by‑step walkthrough, see the schema and architecture sec
 | **SQLite Database**           | Stores normalized tables on internal SSD for fast query performance.                           |
 | **Metabase (BI Layer)**       | Connects to SQLite, runs SQL queries, and renders interactive charts.                          |
 | **Dashboard**                 | Four tabs: Summary, Time Habits, Trip Behavior, and Geographic Insights.                       |
-
----
-
-Performance Metrics
-
-| Metric | Value |
-| :--- | :--- |
-| **Total rows loaded** | 15,819,921 |
-| **Rows after cleaning** | ~15,500,000 |
-| **Database file size** | 8.7 GB |
-| **Unique stations** | ~500 (after aggregation) |
-| **Pipeline runtime** | ~25 minutes (full ETL + import) |
-| **Dashboard query time** | < 2 seconds on internal SSD with indexes |
