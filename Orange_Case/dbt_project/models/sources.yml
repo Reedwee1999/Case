@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: public
+    database: warehouse
+    schema: public
+    tables:
+      - name: users
+      - name: posts
+      - name: comments
