@@ -37,62 +37,6 @@ For a detailed step-by-step walkthrough, see the schema documentation below.
 
 ## Prerequisites
 
-- **Docker Desktop** installed and running
-
----
-
-
-### 1. Start the environment
-
-```bash
-cd /your/path/here
-./init.sh
-```
-
-### 2. Check your JSON file
-
-Ensure your `social_media_info.json` file is inside the `/home/jovyan/work/social_media_info.json` (mounted from `./spark_code`), note that it *will* be in a zip.
-
-```bash
-cp datasets/social_media_info.json spark_code/
-```
-
-### 4. Run the pipeline via Airflow (recommended)
-
-1. Open Airflow UI: [http://localhost:8080](http://localhost:8080)
-   - Username: `airflow`
-   - Password: `airflow`
-2. Find the DAG `social_media_pipeline`.
-3. Toggle the DAG "On" and click the "Play" button to trigger a manual run.
-4. Monitor the logs for `run_pyspark_etl` and `run_dbt_marts` — both should turn green.
-
-### 5. Or run manually (alternative)
-
-```bash
-# Run PySpark ETL
-docker exec pyspark spark-submit --jars /home/jovyan/drivers/postgresql-42.7.3.jar /home/jovyan/work/etl.py
-
-# Run dbt models
-docker exec dbt dbt run --profiles-dir /app --project-dir /app
-```
-
-### 6. Verify the results
-
-Connect to the PostgreSQL warehouse:
-
-```bash
-docker exec -it postgres_warehouse psql -U warehouse -d warehouse
-```
-
-Run queries to inspect the data marts:
-
-```sql
-\dt
-SELECT * FROM tag_analysis_mart ORDER BY post_count DESC LIMIT 10;
-SELECT * FROM user_engagement_mart LIMIT 5;
-SELECT * FROM content_performance_mart LIMIT 5;
-```
-
 ---
 
 ## Database Schema
@@ -134,19 +78,6 @@ The data warehouse globally consists of **six tables** in the `public` schema:
 | **Airflow**             | Orchestrates the ETL (`spark-submit`) and dbt tasks on a daily schedule.                                  |
 | **Docker Compose**      | Multi‑container environment connecting all services, with persistent volumes for data.                    |
 | **Docker Socket Mount** | `/var/run/docker.sock` is mounted into Airflow, allowing it to run `docker exec` commands on the host.    |
-
----
-
-## Deliverables
-
-This repository contains everything required for the task:
-
-1. **Data Model** – Documented in the schema section above and in `dbt_project/models/sources.yml`.
-2. **Airflow DAG** – `dags/social_media_pipeline.py`
-3. **PySpark Script** – `spark_code/etl.py`
-4. **dbt Models** – 3 `.sql` files in `dbt_project/models/`
-5. **Documentation** – This README file.
-6. **Environment Configuration** – `docker-compose.yaml` and `Dockerfile`.
 
 ---
 
