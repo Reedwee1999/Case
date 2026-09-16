@@ -1,0 +1,178 @@
+import sqlite3
+import time
+from collections import deque
+
+from cassandra.cluster import Cluster, ConsistencyLevel, ExecutionProfile
+from cassandra.policies import RetryPolicy
+
+
+# config 
+
+SQLITE_DB       = "/Volumes/IDEP/data_data.db"
+SCYLLA_HOSTS    = ["127.0.0.1"]
+SCYLLA_PORT     = 9042
+KEYSPACE        = "blah"
+
+CONCURRENCY     = 64
+PROGRESS_EVERY  = 10_000
+SESSION_TIMEOUT = 60
+SQLITE_CHUNK    = 5_000
+
+
+# tables 
+TABLES = [
+    {
+        "name": "stations",
+        "columns": ["station_id", "station_name"],
+        "cast_cols": {},
+        "limit": None,
+    },
+    {
+        "name": "coordinates",
+        "columns": ["coordinate_id", "ride_id",
+                    "start_lat", "start_lng", "end_lat", "end_lng"],
+        "cast_cols": {"coordinate_id": str},
+        "limit": 20_000,
+    },
+    {
+        "name": "rides",
+        "columns": ["ride_id", "rideable_type", "started_at", "ended_at",
+                    "duration_min", "distance_km", "season", "member_casual",
+                    "start_station_id", "end_station_id", "coordinate_id"],
+        "cast_cols": {"coordinate_id": str},
+        "limit": 20_000,
+    },
+]
+
+
+# cluster 
+
+def make_cluster():
+    profile = ExecutionProfile(
+        consistency_level=ConsistencyLevel.ONE,
+        request_timeout=SESSION_TIMEOUT,
+        retry_policy=RetryPolicy(),
+    )
+    return Cluster(
+        SCYLLA_HOSTS,
+        port=SCYLLA_PORT,
+        compression=True,
+        execution_profiles={None: profile},
+        connect_timeout=10,
+        control_connection_timeout=10,
+    )
+
+
+# migrate 
+
+def migrate_table(sqlite_conn, session, spec):
+    name      = spec["name"]
+    cols      = spec["columns"]
+    cast_cols = spec.get("cast_cols", {})
+    limit     = spec.get("limit")
+
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    print(f"{name}", flush=True)
+
+    cur = sqlite_conn.cursor()
+    total = cur.execute(
+        f"SELECT COUNT(*) FROM (SELECT 1 FROM {name}{limit_sql})"
+    ).fetchone()[0]
+    if total == 0:
+        print("  empty", flush=True)
+        return
+    print(f"{total:,} rows", flush=True)
+
+    placeholders = ", ".join("?" for _ in cols)
+    cql = f"INSERT INTO {KEYSPACE}.{name} ({', '.join(cols)}) VALUES ({placeholders})"
+    prepared = session.prepare(cql)
+
+    cur = sqlite_conn.cursor()
+    cur.execute(f"SELECT {', '.join(cols)} FROM {name}{limit_sql}")
+
+    pending     = deque()
+    submitted   = 0
+    errors      = 0
+    last_report = 0
+    start       = time.time()
+
+    def drain_one():
+        nonlocal errors
+        try:
+            pending.popleft().result()
+        except Exception as e:
+            errors += 1
+            if errors <= 5:
+                print(f"  ! {e}", flush=True)
+
+    while True:
+        rows = cur.fetchmany(SQLITE_CHUNK)
+        if not rows:
+            break
+
+        for row in rows:
+            if cast_cols:
+                args = tuple(
+                    cast_cols[c](v) if c in cast_cols and v is not None else v
+                    for c, v in zip(cols, row)
+                )
+            else:
+                args = row
+
+            while len(pending) >= CONCURRENCY:
+                drain_one()
+
+            pending.append(session.execute_async(prepared, args))
+            submitted += 1
+
+            if submitted - last_report >= PROGRESS_EVERY:
+                elapsed = time.time() - start
+                rate    = submitted / elapsed if elapsed else 0
+                pct     = 100.0 * submitted / total
+                eta     = (total - submitted) / rate if rate else 0
+                print(f"{submitted:,}/{total:,} {pct:.1f}% "
+                      f"{rate:,.0f}/s ETA {eta:,.0f}s", flush=True)
+                last_report = submitted
+
+    while pending:
+        drain_one()
+
+    elapsed = time.time() - start
+    rate    = submitted / elapsed if elapsed else 0
+    print(f"done {submitted:,} in {elapsed:.1f}s ({rate:,.0f}/s) "
+          f"errs={errors}", flush=True)
+
+
+# main 
+
+def main():
+    sqlite_conn = None
+    cluster     = None
+
+    try:
+        print(f"sqlite: {SQLITE_DB}", flush=True)
+        sqlite_conn = sqlite3.connect(SQLITE_DB)
+
+        print(f"scylla: {SCYLLA_HOSTS[0]}:{SCYLLA_PORT}", flush=True)
+        cluster = make_cluster()
+        session = cluster.connect(KEYSPACE)
+
+        overall = time.time()
+        for spec in TABLES:
+            migrate_table(sqlite_conn, session, spec)
+        print(f"\ntotal {time.time() - overall:.1f}s", flush=True)
+
+    except Exception as e:
+        print(f"failed: {e}", flush=True)
+        raise
+    finally:
+        if sqlite_conn is not None:
+            sqlite_conn.close()
+        if cluster is not None:
+            cluster.shutdown()
+
+
+# entry 
+
+if __name__ == "__main__":
+    main()
